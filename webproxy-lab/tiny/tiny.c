@@ -90,20 +90,18 @@ void doit(int fd) {
 }
 void clienterror(int fd, char *cause, char *errnum, char *shortmsg, char *longmsg) {
   char buf[MAXLINE], body[MAXBUF];
-
-  sprintf(body, "<html><title>Tiny Error</title>");
-  sprintf(body, "%s<body bgcolor=\"ffffff\">\r\n", body);
-  sprintf(body, "%s%s: %s\r\n", body, errnum, shortmsg);
-  sprintf(body, "%s<p>%s: %s</p>\r\n", body, longmsg, cause);
-  sprintf(body, "%s<hr><em>The Tiny Web server</em>\r\n", body);
-
-  sprintf(buf, "HTTP/1.0 %s %s\r\n", errnum, shortmsg);
-  Rio_writen(fd, buf, strlen(buf));
-  sprintf(buf, "Content-type: text/html\r\n");
-  Rio_writen(fd, buf, strlen(buf));
-  sprintf(buf, "Content-length: %d\r\n\r\n", (int)strlen(body));
-  Rio_writen(fd, buf, strlen(buf));
-  Rio_writen(fd, body, strlen(body));
+  int n = 0;
+  n += snprintf(body + n, sizeof(body) - n, "<html><title>Tiny Error</title>");
+  n += snprintf(body + n, sizeof(body) - n, "<body bgcolor=\"ffffff\">\r\n");
+  n += snprintf(body + n, sizeof(body) - n, "%s: %s\r\n", errnum, shortmsg);
+  n += snprintf(body + n, sizeof(body) - n, "<p>%s: %s</p>\r\n", longmsg, cause);
+  n += snprintf(body + n, sizeof(body) - n, "<hr><em>The Tiny Web server</em>\r\n");
+  int h = 0;
+  h += snprintf(buf + h, sizeof(buf) - h, "HTTP/1.0 %s %s\r\n", errnum, shortmsg);
+  h += snprintf(buf + h, sizeof(buf) - h, "Content-type: text/html\r\n");
+  h += snprintf(buf + h, sizeof(buf) - h, "Content-length: %d\r\n\r\n", n);
+  Rio_writen(fd, buf, h);
+  Rio_writen(fd, body, n);
 }
 void read_requesthdrs(rio_t *rp) {
   char buf[MAXLINE];
@@ -156,12 +154,13 @@ void serve_static(int fd, char *filename, int filesize) {
   char *srcp, filetype[MAXLINE], buf[MAXBUF];
 
   get_filetype(filename, filetype);
-  sprintf(buf, "HTTP/1.0 200 OK\r\n");
-  sprintf(buf, "%sServer: Tiny Web Server\r\n", buf);
-  sprintf(buf, "%sConnection: close\r\n", buf);
-  sprintf(buf, "%sContent-length: %d\r\n", buf, filesize);
-  sprintf(buf, "%sContent-type: %s\r\n\r\n", buf, filetype);
-  Rio_writen(fd, buf, strlen(buf));
+  int n = 0;
+  n += snprintf(buf + n, sizeof(buf) - n, "HTTP/1.0 200 OK\r\n");
+  n += snprintf(buf + n, sizeof(buf) - n, "Server: Tiny Web Server\r\n");
+  n += snprintf(buf + n, sizeof(buf) - n, "Connection: close\r\n");
+  n += snprintf(buf + n, sizeof(buf) - n, "Content-length: %d\r\n", filesize);
+  n += snprintf(buf + n, sizeof(buf) - n, "Content-type: %s\r\n\r\n", filetype);
+  Rio_writen(fd, buf, n);
   printf("Response headers: %s\n", buf);
 
   srcfd = Open(filename, O_RDONLY, 0);
