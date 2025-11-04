@@ -36,7 +36,7 @@ int main(int argc, char **argv) {
     - handle the transaction
     - close the connection
     */
-    sizeOfClientAddress = sizeof(clientAddress); /* Why must it be inside the loop? */
+    sizeOfClientAddress = sizeof(clientAddress); /* Why must it be inside the loop?: Resolved */
     connectfd = Accept(listenfd, (SA *)&clientAddress, &sizeOfClientAddress); /* Accept the connection request */
     Getnameinfo((SA *)&clientAddress, sizeOfClientAddress, hostname, MAXLINE, port, MAXLINE, 0); /* Set up the hostname and port */
     printf("Accepted connection from (%s, %s)\n", hostname, port); /* Nothing logical, just logging */
