@@ -5,12 +5,13 @@
 #include "proxy-help.h"
 #include "event-log/event-log.h"
 
-static void processTransaction(int connectfd);
+static void processTransaction(int originfd);
 static int parseRequestLine(rio_t *clientBuffer, char *method, char *uri, char *version, char *proxyBuffer);
 static void parseURI(const char *uri, char *hostname, char *port, char *path);
-static void appendToBuffer(char *buffer, size_t *offset, size_t maxlen, const char *str);
+static void appendToBuffer(char *buffer, size_t *offset, size_t capacity, const char *append);
 static void buildHeaderBuffer(rio_t *clientBuffer, const char *hostname, char *headerBuffer);
-static void deliverResponse(rio_t *serverBuffer, int clientfd);
+static void deliverResponse(rio_t *serverBuffer, int originfd);
+static void *thread(void *pArgument);
 
 int main(int argc, char **argv) {
   if(argc != 2) {
@@ -23,11 +24,13 @@ int main(int argc, char **argv) {
   struct sockaddr_storage clientAddress;
   socklen_t sizeOfClientAddress;
   listenfd = Open_listenfd(argv[1]);
-  while(True) {
+  while (True) {
     sizeOfClientAddress = sizeof(clientAddress);
     originfd = Accept(listenfd, (SA *)&clientAddress, &sizeOfClientAddress);
-    processTransaction(originfd);
-    Close(originfd);
+    int *pCopyOfOriginfd = Malloc(sizeof(int));
+    *pCopyOfOriginfd = originfd;
+    pthread_t threadId;
+    Pthread_create(&threadId, NULL, thread, pCopyOfOriginfd);
   }
   return 0;
 }
@@ -148,4 +151,12 @@ static void deliverResponse(rio_t *serverBuffer, int originfd) {
   while((n = Rio_readnb(serverBuffer, proxyBuffer, MAXBUF)) > 0) {
     Rio_writen(originfd, proxyBuffer, n);
   }
+}
+static void *thread(void *pArgument) {
+  int originfd = *((int *)pArgument);
+  Free(pArgument);
+  Pthread_detach(Pthread_self());
+  processTransaction(originfd);
+  Close(originfd);
+  return NULL;
 }
