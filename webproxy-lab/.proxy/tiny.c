@@ -18,10 +18,10 @@ void serve_dynamic(int fd, char *filename, char *cgiargs);
 void clienterror(int fd, char *cause, char *errnum, char *shortmsg, char *longmsg);
 
 int main(int argc, char **argv) {
-  int listenfd, connfd;
+  int listenfd, connectfd;
   char hostname[MAXLINE], port[MAXLINE];
-  socklen_t clientlen;
-  struct sockaddr_storage clientaddr;
+  socklen_t sizeOfClientAddress;
+  struct sockaddr_storage clientAddress;
 
   /* Check command line args */
   if(argc != 2) {
@@ -30,157 +30,145 @@ int main(int argc, char **argv) {
   }
 
   listenfd = Open_listenfd(argv[1]);
-  while(1) {
-    clientlen = sizeof(clientaddr);
-    connfd = Accept(listenfd, (SA *)&clientaddr, &clientlen); // line:netp:tiny:accept
-    Getnameinfo((SA *)&clientaddr, clientlen, hostname, MAXLINE, port, MAXLINE, 0);
-    printf("Accepted connection from (%s, %s)\n", hostname, port);
-    doit(connfd);  // line:netp:tiny:doit
-    Close(connfd); // line:netp:tiny:close
+  while(True) {
+    /* Logical Flow
+    - complete the connection
+    - handle the transaction
+    - close the connection
+    */
+    sizeOfClientAddress = sizeof(clientAddress); /* Why must it be inside the loop?: Resolved */
+    connectfd = Accept(listenfd, (SA *)&clientAddress, &sizeOfClientAddress); /* Accept the connection request */
+    Getnameinfo((SA *)&clientAddress, sizeOfClientAddress, hostname, MAXLINE, port, MAXLINE, 0); /* Set up the hostname and port */
+    printf("Accepted connection from (%s, %s)\n", hostname, port); /* Nothing logical, just logging */
+    doit(connectfd); /* Handle one transaction */
+    Close(connectfd); /* Close the connection request */
   }
 }
 
-/*
- * doit - handle one HTTP request/response transaction
- */
 void doit(int fd) {
-  int is_static;
-  struct stat sbuf;
+  /* Logical Flow
+  - read request line
+  - locate the file requested
+  - serve
+  */
+  int isRequestStatic;
+  struct stat fileInformation; /* Information about the file */
   char buf[MAXLINE], method[MAXLINE], uri[MAXLINE], version[MAXLINE];
   char filename[MAXLINE], cgiargs[MAXLINE];
   rio_t rio;
 
-  /* Read request line and headers */
   Rio_readinitb(&rio, fd);
-  if(!Rio_readlineb(&rio, buf, MAXLINE))
-    return;
-  printf("%s", buf);
-  sscanf(buf, "%s %s %s", method, uri, version);
+  Rio_readlineb(&rio, buf, MAXLINE); /* Read one request line */
+  printf("Request headers: %s\n", buf);
+  sscanf(buf, "%s %s %s", method, uri, version); /* Set up the variables */
   if(strcasecmp(method, "GET")) {
-    clienterror(fd, method, "501", "Not Implemented", "Tiny does not implement this method");
-    return;
+    clienterror(fd, method, "501", "Not implemented", "Tiny does not implement this method");
+    return; /* Return when the request isn't GET METHOD */
   }
-  read_requesthdrs(&rio);
+  read_requesthdrs(&rio); /* Drain the buffer */
 
-  /* Parse URI from GET request */
-  is_static = parse_uri(uri, filename, cgiargs);
-  if(stat(filename, &sbuf) < 0) {
+  isRequestStatic = parse_uri(uri, filename, cgiargs); /* Set up the file name and arguments */
+  if(stat(filename, &fileInformation) < 0) {
     clienterror(fd, filename, "404", "Not found", "Tiny couldn't find this file");
-    return;
+    return; /* Return when cannot find the file */
   }
 
-  if(is_static) { /* Serve static content */
-    if(!(S_ISREG(sbuf.st_mode)) || !(S_IRUSR & sbuf.st_mode)) {
+  if(isRequestStatic) {
+    if(!(S_ISREG(fileInformation.st_mode)) || !(S_IRUSR & fileInformation.st_mode)) {
       clienterror(fd, filename, "403", "Forbidden", "Tiny couldn't read the file");
       return;
     }
-    serve_static(fd, filename, sbuf.st_size);
+    serve_static(fd, filename, fileInformation.st_size);
   }
-  else { /* Serve dynamic content */
-    if(!(S_ISREG(sbuf.st_mode)) || !(S_IXUSR & sbuf.st_mode)) {
+  else {
+    if(!(S_ISREG(fileInformation.st_mode)) || !(S_IXUSR & fileInformation.st_mode)) {
       clienterror(fd, filename, "403", "Forbidden", "Tiny couldn't run the CGI program");
       return;
     }
     serve_dynamic(fd, filename, cgiargs);
   }
 }
-
-/*
- * read_requesthdrs - read HTTP request headers
- */
+void clienterror(int fd, char *cause, char *errnum, char *shortmsg, char *longmsg) {
+  char buf[MAXLINE], body[MAXBUF];
+  int n = 0;
+  n += snprintf(body + n, sizeof(body) - n, "<html><title>Tiny Error</title>");
+  n += snprintf(body + n, sizeof(body) - n, "<body bgcolor=\"ffffff\">\r\n");
+  n += snprintf(body + n, sizeof(body) - n, "%s: %s\r\n", errnum, shortmsg);
+  n += snprintf(body + n, sizeof(body) - n, "<p>%s: %s</p>\r\n", longmsg, cause);
+  n += snprintf(body + n, sizeof(body) - n, "<hr><em>The Tiny Web server</em>\r\n");
+  int h = 0;
+  h += snprintf(buf + h, sizeof(buf) - h, "HTTP/1.0 %s %s\r\n", errnum, shortmsg);
+  h += snprintf(buf + h, sizeof(buf) - h, "Content-type: text/html\r\n");
+  h += snprintf(buf + h, sizeof(buf) - h, "Content-length: %d\r\n\r\n", n);
+  Rio_writen(fd, buf, h);
+  Rio_writen(fd, body, n);
+}
 void read_requesthdrs(rio_t *rp) {
   char buf[MAXLINE];
-
-  Rio_readlineb(rp, buf, MAXLINE);
-  printf("%s", buf);
-  while(strcmp(buf, "\r\n")) {
+  /* Read the first line */ Rio_readlineb(rp, buf, MAXLINE);
+  while(/* If the next line is not a blank, drain one more line */ strcmp(buf, "\r\n")) {
     Rio_readlineb(rp, buf, MAXLINE);
-    printf("%s", buf);
+    printf("💻 Drain the buffer: %s", buf);
   }
   return;
 }
-
-/*
- * parse_uri - parse URI into filename and CGI args
- *             return 0 if dynamic content, 1 if static
- */
 int parse_uri(char *uri, char *filename, char *cgiargs) {
   char *ptr;
-
-  if(!strstr(uri, "cgi-bin")) { /* Static content */
+  if(/* CASE 1: content is not dynamic */ !strstr(uri, "cgi-bin")) {
+    /* No arguments required */
     strcpy(cgiargs, "");
+    
+    /* Setting up the file name */
     strcpy(filename, ".");
     strcat(filename, uri);
-    if(uri[strlen(uri) - 1] == '/')
-      strcat(filename, "home.html");
-    return 1;
+    if(uri[strlen(uri) - 1] == '/') strcat(filename, "home.html"); /* When will this happen? */
+
+    return CONTENT_IS_STATIC;
   }
-  else
-  { /* Dynamic content */
+  else /* CASE 2: content is dynamic */ {
     ptr = index(uri, '?');
+    
+    /* Setting up the arguments */ 
     if(ptr) {
       strcpy(cgiargs, ptr + 1);
       *ptr = '\0';
     }
-    else
-      strcpy(cgiargs, "");
+    else strcpy(cgiargs, "");
+    
+    /* Setting up the file name */
     strcpy(filename, ".");
     strcat(filename, uri);
-    return 0;
+    
+    return CONTENT_IS_DYNAMIC;
   }
 }
-
-/*
- * serve_static - copy a file back to the client
- */
 void serve_static(int fd, char *filename, int filesize) {
+  /* Logical Flow
+  - Open file
+  - Memory mapping
+  - Close file
+  - Write on socket
+  - Memory unmapping
+  */
   int srcfd;
-  char *srcp, filetype[MAXLINE];
+  char *srcp, filetype[MAXLINE], buf[MAXBUF];
 
-  char buf[MAXBUF];
-  char *p = buf;
-  int n;
-  int remaining = sizeof(buf);
-
-  /* Send response headers to client */
   get_filetype(filename, filetype);
+  int n = 0;
+  n += snprintf(buf + n, sizeof(buf) - n, "HTTP/1.0 200 OK\r\n");
+  n += snprintf(buf + n, sizeof(buf) - n, "Server: Tiny Web Server\r\n");
+  n += snprintf(buf + n, sizeof(buf) - n, "Connection: close\r\n");
+  n += snprintf(buf + n, sizeof(buf) - n, "Content-length: %d\r\n", filesize);
+  n += snprintf(buf + n, sizeof(buf) - n, "Content-type: %s\r\n\r\n", filetype);
+  Rio_writen(fd, buf, n);
+  printf("Response headers: %s\n", buf);
 
-  /* Build the HTTP response headers correctly - use separate buffers or append */
-  n = snprintf(p, remaining, "HTTP/1.0 200 OK\r\n");
-  p += n;
-  remaining -= n;
-
-  n = snprintf(p, remaining, "Server: Tiny Web Server\r\n");
-  p += n;
-  remaining -= n;
-
-  n = snprintf(p, remaining, "Connection: close\r\n");
-  p += n;
-  remaining -= n;
-
-  n = snprintf(p, remaining, "Content-length: %d\r\n", filesize);
-  p += n;
-  remaining -= n;
-
-  n = snprintf(p, remaining, "Content-type: %s\r\n\r\n", filetype);
-  p += n;
-  remaining -= n;
-
-  Rio_writen(fd, buf, strlen(buf));
-  printf("Response headers:\n");
-  printf("%s", buf);
-
-  /* Send response body to client */
   srcfd = Open(filename, O_RDONLY, 0);
   srcp = Mmap(0, filesize, PROT_READ, MAP_PRIVATE, srcfd, 0);
   Close(srcfd);
   Rio_writen(fd, srcp, filesize);
   Munmap(srcp, filesize);
 }
-
-/*
- * get_filetype - derive file type from file name
- */
 void get_filetype(char *filename, char *filetype) {
   if(strstr(filename, ".html")) strcpy(filetype, "text/html");
   else if(strstr(filename, ".gif")) strcpy(filetype, "image/gif");
@@ -188,76 +176,18 @@ void get_filetype(char *filename, char *filetype) {
   else if(strstr(filename, ".jpg")) strcpy(filetype, "image/jpeg");
   else strcpy(filetype, "text/plain");
 }
-
-/*
- * serve_dynamic - run a CGI program on behalf of the client
- */
 void serve_dynamic(int fd, char *filename, char *cgiargs) {
-  char buf[MAXLINE], *emptylist[] = {NULL};
-  pid_t pid;
+  char buf[MAXLINE], *emptylist[] = { NULL };
 
-  /* Return first part of HTTP response */
   sprintf(buf, "HTTP/1.0 200 OK\r\n");
   Rio_writen(fd, buf, strlen(buf));
   sprintf(buf, "Server: Tiny Web Server\r\n");
   Rio_writen(fd, buf, strlen(buf));
 
-  /* Create a child process to handle the CGI program */
-  if((pid = Fork()) < 0) { /* Fork failed */
-    perror("Fork failed");
-    return;
-  }
-
-  if(pid == 0) { /* Child process */
-    /* Real server would set all CGI vars here */
+  if(Fork() == 0) {
     setenv("QUERY_STRING", cgiargs, 1);
-
-    /* Redirect stdout to client */
-    if(Dup2(fd, STDOUT_FILENO) < 0) {
-      perror("Dup2 error");
-      exit(1);
-    }
-    Close(fd);
-
-    /* Run CGI program */
-    Execve(filename, emptylist, environ);
-
-    /* If we get here, Execve failed */
-    perror("Execve error");
-    exit(1);
+    Dup2(fd, STDOUT_FILENO); /* Replace "STDOUT_FILENO" with "fd": "printf" prints directly to the client socket, not the terminal */
+    Execve(filename, emptylist, environ); /* Execute the CGI program */
   }
-  else { /* Parent process */
-    /* Parent waits for child to terminate */
-    int status;
-    if(waitpid(pid, &status, 0) < 0) {
-      perror("Wait error");
-    }
-
-    printf("Child process %d terminated with status %d\n", pid, status);
-    /* Parent continues normally - returns to doit() */
-  }
-  /* When we return from here, doit() will close the connection */
-}
-
-/*
- * clienterror - returns an error message to the client
- */
-void clienterror(int fd, char *cause, char *errnum, char *shortmsg, char *longmsg) {
-  char buf[MAXLINE], body[MAXBUF];
-
-  /* Build the HTTP response body */
-  sprintf(body, "<html><title>Tiny Error</title>");
-  sprintf(body, "%s<body bgcolor=" "ffffff" ">\r\n", body);
-  sprintf(body, "%s%s: %s\r\n", body, errnum, shortmsg);
-  sprintf(body, "%s<p>%s: %s\r\n", body, longmsg, cause);
-  sprintf(body, "%s<hr><em>The Tiny Web server</em>\r\n", body);
-
-  /* Print the HTTP response */
-  sprintf(buf, "HTTP/1.0 %s %s\r\n", errnum, shortmsg);
-  Rio_writen(fd, buf, strlen(buf));
-  sprintf(buf, "Content-type: text/html\r\n");
-  Rio_writen(fd, buf, strlen(buf));
-  sprintf(buf, "Content-length: %d\r\n\r\n", (int)strlen(body));
-  Rio_writen(fd, buf, strlen(buf));
-  Rio_writen(fd, body, strlen(body));
+  Wait(NULL);
 }
